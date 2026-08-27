@@ -3396,7 +3396,8 @@ async function drawUxFlow(flow) {
 
   var L = UXFLOW_LAYOUT;
   var section = figma.createSection();
-  section.name = (flow.page || '페이지') + ' > ' + (flow.feature || '기능');
+  // 페이지 단위는 항상 [ ] 표기 — 레이어명·제목 공통
+  section.name = '[' + (flow.page || '페이지') + '] > ' + (flow.feature || '기능');
 
   // ── 헤더: 제목 + 참고 피그마 링크 ──
   var cursorY = L.PAD * 0.5;

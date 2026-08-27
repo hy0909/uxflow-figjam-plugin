@@ -668,10 +668,10 @@
       item.onmouseleave = () => item.style.borderColor = '#3a3a3a';
       const title = document.createElement('div');
       title.style.cssText = 'font-size:13px;font-weight:600;';
-      title.textContent = f.title || (f.page + ' > ' + f.feature);
+      title.textContent = f.title || ('[' + f.page + '] > ' + f.feature);
       const sub = document.createElement('div');
       sub.style.cssText = 'font-size:11px;color:#888;';
-      sub.textContent = `${f.page} > ${f.feature} · 노드 ${f.nodeCount}개`;
+      sub.textContent = `[${f.page}] > ${f.feature} · 노드 ${f.nodeCount}개`;
       item.appendChild(title); item.appendChild(sub);
       item.onclick = () => drawUxFlowFromFile(f.file, title.textContent);
       list.appendChild(item);
