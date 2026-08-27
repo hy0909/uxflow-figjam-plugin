@@ -1,0 +1,12 @@
+# 플러그인 로직만 버전 관리 — 프로젝트별 md/산출물은 전부 제외 (화이트리스트 방식)
+*
+!.gitignore
+!README.md
+!manifest.json
+!code.js
+!ui.html
+!server.js
+!start-server.sh
+!install.sh
+!uninstall.sh
+!기능명세-생성-로직-법칙.md
