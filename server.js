@@ -726,6 +726,178 @@ function callClaudeCLI(prompt, retriedAfterMissingCli) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════
+// UX Flow 생성 — 플러그인 UI가 준 md/피그마 링크로 Claude가 flow JSON을 만든다
+// ═══════════════════════════════════════════════════════════
+
+// GitHub blob/tree/raw URL → md 원문 목록 [{name, url, content}]
+// ref에 슬래시(브랜치명 docs/foo)가 올 수 있어 ref/path 분리를 시도하며 gh api로 조회한다(프라이빗 레포 지원).
+function fetchGithubMd(url) {
+  const m = String(url).match(/github\.com\/([^/]+)\/([^/]+)\/(blob|tree|raw)\/(.+)$/);
+  if (!m) return null;
+  const [, owner, repo, kind, rest] = m;
+  const segs = rest.split('/').filter(Boolean);
+  // ref가 몇 세그먼트인지 모름 — 긴 ref부터 시도
+  for (let refLen = Math.min(4, segs.length); refLen >= 1; refLen--) {
+    const ref = segs.slice(0, refLen).join('/');
+    const p = segs.slice(refLen).join('/');
+    try {
+      const out = execFileSync('gh', ['api', `repos/${owner}/${repo}/contents/${p}?ref=${ref}`],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
+      const data = JSON.parse(out);
+      if (Array.isArray(data)) {
+        // 디렉터리(tree): 안의 .md 전부
+        const files = [];
+        for (const f of data) {
+          if (f.type === 'file' && /\.md$/i.test(f.name)) {
+            const fo = execFileSync('gh', ['api', `repos/${owner}/${repo}/contents/${f.path}?ref=${ref}`],
+              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
+            const fd = JSON.parse(fo);
+            files.push({ name: f.name, url: f.html_url, content: Buffer.from(fd.content, 'base64').toString('utf8') });
+          }
+        }
+        return files;
+      }
+      if (data.content) {
+        return [{ name: data.name, url: data.html_url || url, content: Buffer.from(data.content, 'base64').toString('utf8') }];
+      }
+    } catch (e) { /* 다음 ref 분리 시도 */ }
+  }
+  throw new Error(`GitHub md를 읽지 못했습니다: ${url} — gh CLI 로그인(gh auth login)과 링크를 확인하세요.`);
+}
+
+function fetchRawUrl(url) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    https.get(url, resp => {
+      if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+        return fetchRawUrl(resp.headers.location).then(resolve, reject);
+      }
+      if (resp.statusCode !== 200) return reject(new Error(`HTTP ${resp.statusCode}: ${url}`));
+      let body = '';
+      resp.on('data', d => body += d);
+      resp.on('end', () => resolve(body));
+    }).on('error', reject);
+  });
+}
+
+async function collectMdSources(mdUrls) {
+  const sources = [];
+  for (const u of mdUrls) {
+    const url = String(u).trim();
+    if (!url) continue;
+    if (/github\.com\/[^/]+\/[^/]+\/(blob|tree|raw)\//.test(url)) {
+      const files = fetchGithubMd(url);
+      if (files) sources.push(...files);
+    } else {
+      const content = await fetchRawUrl(url);
+      sources.push({ name: url.split('/').pop() || 'doc.md', url, content });
+    }
+  }
+  return sources;
+}
+
+// 스킬 규칙 로드 — 플러그인 폴더 안(skills/) 또는 ~/.claude/skills 심링크에서
+function loadUxflowSkillRules() {
+  const candidates = [
+    path.join(__dirname, 'skills', 'uxflow-generator'),
+    path.join(os.homedir(), '.claude', 'skills', 'uxflow-generator'),
+  ];
+  for (const dir of candidates) {
+    try {
+      const skill = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+      const schema = fs.readFileSync(path.join(dir, 'references', 'flow-schema.md'), 'utf8');
+      return skill + '\n\n---\n\n' + schema;
+    } catch (e) { /* 다음 후보 */ }
+  }
+  return ''; // 스킬 미설치 — 프롬프트의 내장 요약 규칙만 사용
+}
+
+function validateFlowMinimal(flow) {
+  const errs = [];
+  if (!flow || typeof flow !== 'object') return ['flow가 객체가 아님'];
+  if (!flow.page || !flow.feature) errs.push('page/feature 누락');
+  if (!Array.isArray(flow.nodes) || !flow.nodes.length) errs.push('nodes 비어 있음');
+  if (!Array.isArray(flow.edges)) errs.push('edges 누락');
+  const ids = new Set((flow.nodes || []).map(n => n.id));
+  for (const e of (flow.edges || [])) {
+    if (!ids.has(e.from) || !ids.has(e.to)) errs.push(`엣지가 없는 노드 참조: ${e.from}→${e.to}`);
+  }
+  const outCnt = {};
+  for (const e of (flow.edges || [])) outCnt[e.from] = (outCnt[e.from] || 0) + 1;
+  for (const n of (flow.nodes || [])) {
+    if (n.type === 'decision' && (outCnt[n.id] || 0) >= 2) {
+      const unlabeled = (flow.edges || []).filter(e => e.from === n.id && !e.label);
+      if (unlabeled.length) errs.push(`decision '${n.label}'에 라벨 없는 분기`);
+    }
+  }
+  return errs;
+}
+
+function extractJson(text) {
+  let t = String(text || '').trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  const start = t.search(/[[{]/);
+  if (start > 0) t = t.slice(start);
+  return JSON.parse(t);
+}
+
+async function generateUxFlows(body) {
+  const mdUrls = Array.isArray(body.mdUrls) ? body.mdUrls : [];
+  const figmaUrls = Array.isArray(body.figmaUrls) ? body.figmaUrls : [];
+  const notes = String(body.notes || '').trim();
+  if (!mdUrls.length && !notes) throw new Error('md 링크 또는 기획 메모 중 하나는 필요합니다.');
+
+  const sources = await collectMdSources(mdUrls);
+  const rules = loadUxflowSkillRules();
+
+  const mdBlock = sources.map(s =>
+    `### ${s.name}\nURL: ${s.url}\n\n${s.content.slice(0, 30000)}`).join('\n\n---\n\n');
+
+  const prompt = `너는 UX Flow Generator다. 아래 스펙 md와 규칙에 따라 FigJam에 그릴 flow JSON을 만든다.
+
+${rules ? '## 스킬 규칙 (반드시 준수)\n\n' + rules : ''}
+
+## 핵심 요약 규칙 (스킬 규칙과 함께 강제)
+- 출력은 flow JSON 객체들의 **JSON 배열만**. 설명·마크다운·코드펜스 금지.
+- 1 flow = 1 페이지 + 1 기능. 스펙이 여러 기능이면 여러 flow로 분리.
+- 모든 엣지는 인접 셀(가로/세로/대각 1칸)만. 유효성 검증은 decision 체인. 긴 루프백 금지 — details로 대체.
+- 필수 입력 전부가 '필수 모두 입력?' decision으로 수렴. 필수 라벨 끝 '*', 선택은 '(선택)'.
+- 진입·버튼은 [ ] 표기 (예: GNB-[QR 발주서 작성]). 취소/닫기 종결은 end 타입.
+- docLinks에 아래 md URL들을, figmaLinks에 아래 피그마 URL들을 넣는다(라벨은 짧게 추론).
+- happy=row 0 왼→오른쪽, 에러(error, red)·예외(exception, orange)는 분기 지점 바로 아래.
+
+## 참고 피그마 링크
+${figmaUrls.map(u => '- ' + u).join('\n') || '- (없음)'}
+
+## 추가 지시
+${notes || '(없음)'}
+
+## 스펙 md 원문
+${mdBlock || '(md 없음 — 추가 지시 기반으로 작성)'}
+`;
+
+  const raw = await callClaudeCLI(prompt);
+  let flows = extractJson(raw);
+  if (!Array.isArray(flows)) flows = [flows];
+
+  const UXFLOW_DIR = path.join(__dirname, 'ux-flows');
+  if (!fs.existsSync(UXFLOW_DIR)) fs.mkdirSync(UXFLOW_DIR, { recursive: true });
+  const saved = [];
+  const failed = [];
+  for (const flow of flows) {
+    const errs = validateFlowMinimal(flow);
+    if (errs.length) { failed.push({ page: flow && flow.page, feature: flow && flow.feature, errors: errs }); continue; }
+    const slug = (flow.page + '-' + flow.feature).replace(/[\/\\:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'flow';
+    const file = slug + '.json';
+    fs.writeFileSync(path.join(UXFLOW_DIR, file), JSON.stringify(flow, null, 2), 'utf8');
+    saved.push({ file, page: flow.page, feature: flow.feature, title: flow.title || `${flow.page} > ${flow.feature}`, nodeCount: flow.nodes.length });
+  }
+  if (!saved.length) throw new Error('생성된 플로우가 검증을 통과하지 못했습니다: ' + JSON.stringify(failed));
+  return { ok: true, flows: saved, failed };
+}
+
 // ── HTTP 서버 ──
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -742,6 +914,23 @@ const server = http.createServer(async (req, res) => {
 
   // ── UX Flow: 스킬(Claude)이 만든 flow JSON을 저장 → FigJam 플러그인이 조회해서 그림 ──
   const UXFLOW_DIR = path.join(__dirname, 'ux-flows');
+
+  // 플러그인 UI에서 md/피그마 링크로 직접 생성
+  if (req.method === 'POST' && req.url === '/ux-flow/generate') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const result = await generateUxFlows(JSON.parse(body || '{}'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
 
   if (req.method === 'POST' && req.url === '/ux-flow') {
     let body = '';

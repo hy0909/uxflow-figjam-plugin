@@ -516,8 +516,17 @@
   <div class="tab-panel" data-panel="uxflow" hidden>
     <div class="hint-text" id="uxflowEnvHint">
       <b>UX Flow 그리기 (피그잼 전용)</b><br>
-      • Claude 스킬(<code style="background:#1a1a1a;padding:1px 4px;border-radius:3px;">uxflow-generator</code>)이 만든 플로우를 피그잼 캔버스에 그립니다.<br>
-      • <b>FigJam 파일</b>에서 이 플러그인을 실행한 뒤, 아래 목록에서 플로우를 클릭하세요.
+      • md 링크(GitHub)와 피그마 링크를 넣고 <b>생성</b>하면 Claude가 플로우를 만들어 바로 그립니다.<br>
+      • 이미 저장된 플로우는 아래 목록에서 클릭해 그립니다.
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;background:#202020;border:1px solid #333;border-radius:10px;padding:12px;margin-bottom:10px;">
+      <label style="font-size:11px;color:#aaa;">📄 md 링크 (한 줄에 하나 — GitHub blob/tree/raw)</label>
+      <textarea id="genMdUrls" rows="2" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://github.com/org/repo/tree/branch/path"></textarea>
+      <label style="font-size:11px;color:#aaa;">🔗 피그마 링크 (한 줄에 하나, 선택)</label>
+      <textarea id="genFigmaUrls" rows="2" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://www.figma.com/design/...?node-id=..."></textarea>
+      <label style="font-size:11px;color:#aaa;">✏️ 추가 지시 (선택)</label>
+      <input id="genNotes" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;" placeholder="예: 발주 신청 기능만 / 관리자 플로우 포함">
+      <button class="btn btn-primary" id="genBtn" onclick="generateUxFlow()" style="margin-top:4px;">⚡ 플로우 생성 → 그리기</button>
     </div>
     <div class="action-area">
       <button class="btn btn-primary" onclick="refreshUxFlows()">플로우 목록 새로고침</button>
@@ -668,6 +677,53 @@
       item.onclick = () => drawUxFlowFromFile(f.file, title.textContent);
       list.appendChild(item);
     });
+  }
+
+  // md/피그마 링크 → 서버가 Claude로 flow JSON 생성 → 자동 그리기
+  async function generateUxFlow() {
+    const btn = document.getElementById('genBtn');
+    const mdUrls = document.getElementById('genMdUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
+    const figmaUrls = document.getElementById('genFigmaUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
+    const notes = document.getElementById('genNotes').value.trim();
+    if (!mdUrls.length && !notes) {
+      setStatus('⚠ md 링크 또는 추가 지시 중 하나는 입력하세요.', 'error');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '⏳ 생성 중... (문서 양에 따라 1~5분)';
+    setStatus('md를 읽고 플로우를 생성하는 중...', '');
+    try {
+      const res = await fetch(SERVER + '/ux-flow/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mdUrls, figmaUrls, notes }),
+        signal: AbortSignal.timeout(330000),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '생성 실패');
+      await refreshUxFlows();
+      const n = data.flows.length;
+      if (editorType === 'figjam') {
+        setStatus(`✓ ${n}개 플로우 생성 — 그리는 중...`, 'success');
+        for (let i = 0; i < data.flows.length; i++) {
+          const f = data.flows[i];
+          const r = await fetch(SERVER + '/ux-flow/get?file=' + encodeURIComponent(f.file));
+          const flow = await r.json();
+          flow.__offset = i * 120; // 여러 개일 때 계단식 배치
+          parent.postMessage({ pluginMessage: { type: 'draw-ux-flow', flow } }, '*');
+        }
+      } else {
+        setStatus(`✓ ${n}개 플로우 생성 완료 — 피그잼 파일에서 목록을 클릭해 그리세요.`, 'success');
+      }
+      if (data.failed && data.failed.length) {
+        setStatus(`✓ ${n}개 생성 · ⚠ ${data.failed.length}개는 검증 실패(재시도 권장)`, 'error');
+      }
+    } catch (e) {
+      setStatus('⚠ ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⚡ 플로우 생성 → 그리기';
+    }
   }
 
   async function drawUxFlowFromFile(file, label) {

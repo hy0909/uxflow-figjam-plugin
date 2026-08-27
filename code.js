@@ -3550,6 +3550,7 @@ async function drawUxFlow(flow) {
   var secW = Math.max(L.PAD * 2 + (maxCol + 1) * L.COL_W, 800);
   var secH = Math.max(nodesTop + (maxRow + 1) * L.ROW_H + L.PAD, 500);
   section.resizeWithoutConstraints(secW, secH);
+  var cascade = typeof flow.__offset === 'number' ? flow.__offset : 0; // 연속 생성 시 계단식 배치
 
   // 참고 링크를 섹션 우측 상단에 세로로 정렬
   var linkY = L.PAD * 0.5;
@@ -3559,8 +3560,8 @@ async function drawUxFlow(flow) {
     ltxt.y = linkY;
     linkY += ltxt.height + 6;
   }
-  section.x = Math.round(figma.viewport.center.x - secW / 2);
-  section.y = Math.round(figma.viewport.center.y - secH / 2);
+  section.x = Math.round(figma.viewport.center.x - secW / 2) + cascade;
+  section.y = Math.round(figma.viewport.center.y - secH / 2) + cascade;
 
   return section;
 }
