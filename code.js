@@ -3341,8 +3341,23 @@ function uxflowDrawLegend(section, x, y) {
     el.x = cx;
     el.y = y + (it.shape === 'DIAMOND' ? -10 : 0);
     uxflowStyleShape(el, UXFLOW_FILL[it.key], UXFLOW_STROKE[it.key]);
-    el.text.characters = it.label;
-    el.text.fontSize = 11;
+    if (it.shape === 'DIAMOND') {
+      // FigJam 마름모는 도형 내장 텍스트가 세로 중앙에서 아래로 밀리므로,
+      // 텍스트를 비우고 별도 텍스트 노드를 도형 정중앙에 오버레이한다.
+      el.text.characters = '';
+      var dt = figma.createText();
+      section.appendChild(dt);
+      dt.fontName = { family: 'Inter', style: 'Regular' };
+      dt.fontSize = 11;
+      dt.characters = it.label;
+      dt.fills = [{ type: 'SOLID', color: UXFLOW_TEXT_COLOR }];
+      dt.x = el.x + (w - dt.width) / 2;
+      dt.y = el.y + (h - dt.height) / 2;
+      dt.name = '범례 텍스트: ' + it.label;
+    } else {
+      el.text.characters = it.label;
+      el.text.fontSize = 11;
+    }
     el.name = '범례: ' + it.label;
     cx += w + 20;
     if (h > maxH) maxH = h;
