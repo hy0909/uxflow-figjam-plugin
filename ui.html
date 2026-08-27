@@ -520,10 +520,9 @@
       • 이미 저장된 플로우는 아래 목록에서 클릭해 그립니다.
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;background:#202020;border:1px solid #333;border-radius:10px;padding:12px;margin-bottom:10px;">
-      <label style="font-size:11px;color:#aaa;">📄 md 링크 (한 줄에 하나 — GitHub blob/tree/raw)</label>
-      <textarea id="genMdUrls" rows="2" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://github.com/org/repo/tree/branch/path"></textarea>
-      <label style="font-size:11px;color:#aaa;">🔗 피그마 링크 (한 줄에 하나, 선택)</label>
-      <textarea id="genFigmaUrls" rows="2" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://www.figma.com/design/...?node-id=..."></textarea>
+      <label style="font-size:11px;color:#aaa;">📎 링크 붙여넣기 — md(GitHub)·피그마 섞어서 몇 개든. 줄바꿈·쉼표·공백 아무거나로 구분</label>
+      <textarea id="genUrls" rows="4" oninput="updateLinkCount()" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://github.com/org/repo/tree/branch/docs, https://www.figma.com/design/...?node-id=1-2 ..."></textarea>
+      <div id="genLinkCount" style="font-size:11px;color:#888;">감지된 링크 없음</div>
       <label style="font-size:11px;color:#aaa;">✏️ 추가 지시 (선택)</label>
       <input id="genNotes" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;" placeholder="예: 발주 신청 기능만 / 관리자 플로우 포함">
       <button class="btn btn-primary" id="genBtn" onclick="generateUxFlow()" style="margin-top:4px;">⚡ 플로우 생성 → 그리기</button>
@@ -679,11 +678,26 @@
     });
   }
 
+  // 링크 파싱: 구분자와 무관하게 URL만 뽑아 md/피그마로 자동 분류
+  function parseLinks() {
+    const raw = document.getElementById('genUrls').value;
+    const urls = [...new Set(raw.match(/https?:\/\/[^\s,"'<>)\]]+/g) || [])];
+    const figmaUrls = urls.filter(u => /figma\.com\//.test(u));
+    const mdUrls = urls.filter(u => !/figma\.com\//.test(u));
+    return { mdUrls, figmaUrls };
+  }
+
+  function updateLinkCount() {
+    const { mdUrls, figmaUrls } = parseLinks();
+    const el = document.getElementById('genLinkCount');
+    if (!mdUrls.length && !figmaUrls.length) { el.textContent = '감지된 링크 없음'; return; }
+    el.textContent = `감지: 📄 md ${mdUrls.length}개 · 🔗 피그마 ${figmaUrls.length}개`;
+  }
+
   // md/피그마 링크 → 서버가 Claude로 flow JSON 생성 → 자동 그리기
   async function generateUxFlow() {
     const btn = document.getElementById('genBtn');
-    const mdUrls = document.getElementById('genMdUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
-    const figmaUrls = document.getElementById('genFigmaUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
+    const { mdUrls, figmaUrls } = parseLinks();
     const notes = document.getElementById('genNotes').value.trim();
     if (!mdUrls.length && !notes) {
       setStatus('⚠ md 링크 또는 추가 지시 중 하나는 입력하세요.', 'error');
