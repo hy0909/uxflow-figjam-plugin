@@ -3261,8 +3261,11 @@ function uxflowShapeType(nodeType) {
 function uxflowCaseKey(node) {
   if (node.type === 'api') return 'api';
   if (node.type === 'decision') return 'decision';
-  if (node.type === 'start' || node.type === 'end') return 'start';
   var c = node.case || 'happy';
+  if (node.type === 'start' || node.type === 'end') {
+    // 예외/에러로 끝나는 종료 노드는 case 색을 따른다 (기본은 초록)
+    return (c !== 'happy' && UXFLOW_FILL[c]) ? c : 'start';
+  }
   return UXFLOW_FILL[c] ? c : 'happy';
 }
 
@@ -3505,7 +3508,8 @@ async function drawUxFlow(flow) {
     var to = shapeById[edge.to];
     if (!from || !to) continue;
     var conn = figma.createConnector();
-    section.appendChild(conn);
+    // 커넥터는 항상 노드 뒤(레이어 최하단)에 깔아 도형·텍스트를 가리지 않게 한다
+    section.insertChild(0, conn);
     // 방향 기반 커넥터 부착점: AUTO 라우팅이 다른 노드를 관통해 오독을 만드는 것을 방지
     // 오른쪽 진행=RIGHT→LEFT, 왼쪽 복귀(루프백)=LEFT→RIGHT, 같은 열 위/아래=BOTTOM/TOP
     var sm = 'AUTO', em = 'AUTO';
@@ -3513,6 +3517,10 @@ async function drawUxFlow(flow) {
     if (fg && tg) {
       if (tg.col > fg.col) { sm = 'RIGHT'; em = 'LEFT'; }
       else if (tg.col < fg.col) { sm = 'LEFT'; em = 'RIGHT'; }
+      else if (Math.abs(tg.row - fg.row) > 1) {
+        // 같은 열에서 2행 이상 떨어진 분기: 사이 노드를 관통하지 않게 왼쪽으로 우회
+        sm = 'LEFT'; em = 'LEFT';
+      }
       else if (tg.row > fg.row) { sm = 'BOTTOM'; em = 'TOP'; }
       else if (tg.row < fg.row) { sm = 'TOP'; em = 'BOTTOM'; }
     }
