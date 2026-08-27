@@ -823,6 +823,16 @@ function validateFlowMinimal(flow) {
   for (const e of (flow.edges || [])) {
     if (!ids.has(e.from) || !ids.has(e.to)) errs.push(`엣지가 없는 노드 참조: ${e.from}→${e.to}`);
   }
+  // 인접성: 2칸 이상 건너뛰는 엣지는 선이 노드를 관통하므로 거부
+  const pos = {};
+  for (const n of (flow.nodes || [])) pos[n.id] = [n.col, n.row];
+  for (const e of (flow.edges || [])) {
+    const f = pos[e.from], t = pos[e.to];
+    if (!f || !t) continue;
+    const dc = Math.abs(t[0] - f[0]), dr = Math.abs(t[1] - f[1]);
+    if (dc >= 2 || (dc === 0 && dr >= 2)) errs.push(`비인접 엣지 ${e.from}→${e.to} (선이 노드 관통)`);
+  }
+
   const outCnt = {};
   for (const e of (flow.edges || [])) outCnt[e.from] = (outCnt[e.from] || 0) + 1;
   for (const n of (flow.nodes || [])) {
