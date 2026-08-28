@@ -689,11 +689,30 @@
     return { mdUrls, figmaUrls };
   }
 
+  let probeTimer = null, probeSeq = 0;
   function updateLinkCount() {
     const { mdUrls, figmaUrls } = parseLinks();
     const el = document.getElementById('genLinkCount');
     if (!mdUrls.length && !figmaUrls.length) { el.textContent = '감지된 링크 없음'; return; }
-    el.textContent = `감지: 📄 md ${mdUrls.length}개 · 🔗 피그마 ${figmaUrls.length}개`;
+    el.textContent = `감지: 📄 md 링크 ${mdUrls.length}개 (폴더면 안의 md 전부 읽음 — 확인 중...) · 🔗 피그마 ${figmaUrls.length}개`;
+    clearTimeout(probeTimer);
+    const seq = ++probeSeq;
+    probeTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(SERVER + '/ux-flow/probe', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mdUrls }), signal: AbortSignal.timeout(15000),
+        });
+        const d = await r.json();
+        if (seq !== probeSeq) return;
+        const names = (d.files || []).map(f => f.name);
+        el.textContent = names.length
+          ? `감지: 📄 md ${names.length}개 (${names.join(', ')}) · 🔗 피그마 ${figmaUrls.length}개`
+          : `감지: 📄 읽을 수 있는 md 없음 — 링크·gh 로그인 확인 · 🔗 피그마 ${figmaUrls.length}개`;
+      } catch (e) {
+        if (seq === probeSeq) el.textContent = `감지: 📄 md 링크 ${mdUrls.length}개 · 🔗 피그마 ${figmaUrls.length}개`;
+      }
+    }, 500);
   }
 
   // md/피그마 링크 → 서버가 Claude로 flow JSON 생성 → 자동 그리기

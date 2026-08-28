@@ -732,7 +732,7 @@ function callClaudeCLI(prompt, retriedAfterMissingCli) {
 
 // GitHub blob/tree/raw URL → md 원문 목록 [{name, url, content}]
 // ref에 슬래시(브랜치명 docs/foo)가 올 수 있어 ref/path 분리를 시도하며 gh api로 조회한다(프라이빗 레포 지원).
-function fetchGithubMd(url) {
+function fetchGithubMd(url, listOnly) {
   const m = String(url).match(/github\.com\/([^/]+)\/([^/]+)\/(blob|tree|raw)\/(.+)$/);
   if (!m) return null;
   const [, owner, repo, kind, rest] = m;
@@ -750,6 +750,7 @@ function fetchGithubMd(url) {
         const files = [];
         for (const f of data) {
           if (f.type === 'file' && /\.md$/i.test(f.name)) {
+            if (listOnly) { files.push({ name: f.name, url: f.html_url }); continue; }
             const fo = execFileSync('gh', ['api', `repos/${owner}/${repo}/contents/${f.path}?ref=${ref}`],
               { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
             const fd = JSON.parse(fo);
@@ -759,11 +760,28 @@ function fetchGithubMd(url) {
         return files;
       }
       if (data.content) {
+        if (listOnly) return [{ name: data.name, url: data.html_url || url }];
         return [{ name: data.name, url: data.html_url || url, content: Buffer.from(data.content, 'base64').toString('utf8') }];
       }
     } catch (e) { /* 다음 ref 분리 시도 */ }
   }
   throw new Error(`GitHub md를 읽지 못했습니다: ${url} — gh CLI 로그인(gh auth login)과 링크를 확인하세요.`);
+}
+
+// 링크 미리보기: 다운로드 없이 md 파일 목록만 확인 (폴더 링크는 안의 md 전부 나열)
+function probeMdSources(mdUrls) {
+  const files = [];
+  for (const u of mdUrls) {
+    const url = String(u).trim();
+    if (!url) continue;
+    if (/github\.com\/[^/]+\/[^/]+\/(blob|tree|raw)\//.test(url)) {
+      const got = fetchGithubMd(url, true);
+      if (got) files.push(...got);
+    } else {
+      files.push({ name: url.split('/').pop() || 'doc.md', url });
+    }
+  }
+  return files;
 }
 
 function fetchRawUrl(url) {
@@ -939,6 +957,24 @@ const server = http.createServer(async (req, res) => {
 
   // ── UX Flow: 스킬(Claude)이 만든 flow JSON을 저장 → FigJam 플러그인이 조회해서 그림 ──
   const UXFLOW_DIR = path.join(__dirname, 'ux-flows');
+
+  // 링크 미리보기 — 폴더(tree) 링크가 실제로 몇 개의 md로 풀리는지 확인
+  if (req.method === 'POST' && req.url === '/ux-flow/probe') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { mdUrls } = JSON.parse(body || '{}');
+        const files = probeMdSources(Array.isArray(mdUrls) ? mdUrls : []);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, files }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
 
   // 플러그인 UI에서 md/피그마 링크로 직접 생성
   if (req.method === 'POST' && req.url === '/ux-flow/generate') {
