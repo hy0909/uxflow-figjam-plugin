@@ -520,6 +520,7 @@
       • 이미 저장된 플로우는 아래 목록에서 클릭해 그립니다.
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;background:#202020;border:1px solid #333;border-radius:10px;padding:12px;margin-bottom:10px;">
+      <div style="font-size:12px;color:#ccc;font-weight:600;margin-bottom:2px;">⚡ 새 플로우 만들기 — 링크를 주면 Claude가 생성해서 바로 그려요</div>
       <label style="font-size:11px;color:#aaa;">📎 링크 붙여넣기 — md(GitHub)·피그마 섞어서 몇 개든. 줄바꿈·쉼표·공백 아무거나로 구분</label>
       <textarea id="genUrls" rows="4" oninput="updateLinkCount()" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://github.com/org/repo/tree/branch/docs, https://www.figma.com/design/...?node-id=1-2 ..."></textarea>
       <div id="genLinkCount" style="font-size:11px;color:#888;">감지된 링크 없음</div>
@@ -527,8 +528,9 @@
       <input id="genNotes" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;" placeholder="예: 발주 신청 기능만 / 관리자 플로우 포함">
       <button class="btn btn-primary" id="genBtn" onclick="generateUxFlow()" style="margin-top:4px;">⚡ 플로우 생성 → 그리기</button>
     </div>
-    <div class="action-area">
-      <button class="btn btn-primary" onclick="refreshUxFlows()">플로우 목록 새로고침</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px;">
+      <div style="font-size:12px;color:#aaa;">💾 저장된 플로우 — <b style="color:#ccc;">클릭하면 캔버스에 그려져요</b></div>
+      <button class="btn" onclick="refreshUxFlows()" style="font-size:11px;padding:4px 10px;">↻ 목록 새로고침</button>
     </div>
     <div id="uxflowList" style="display:flex;flex-direction:column;gap:8px;"></div>
   </div>
