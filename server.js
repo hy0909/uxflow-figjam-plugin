@@ -708,7 +708,7 @@ function callClaudeCLI(prompt, retriedAfterMissingCli) {
       if (timedOut) return reject(new Error('Claude 응답 시간 초과(300초). 화면이 매우 복잡합니다. 잠시 후 다시 시도하세요.'));
       if (code !== 0) {
         const msg = stderr.trim() || stdout.trim();
-        if (/not logged in|login|auth|authentication/i.test(msg)) reject(new Error('Claude Code CLI 로그인 필요 — 터미널에서 claude auth login 실행 후 재시도하세요.'));
+        if (/not logged in|login|auth|authentication/i.test(msg)) reject(new Error('Claude Code CLI 로그인 만료 — 터미널에서  "' + claudePath + '"  실행 → /login 입력으로 재로그인 후 다시 시도하세요.'));
         else reject(new Error(msg || `claude 프로세스 종료 코드: ${code}`));
       } else {
         resolve(stdout.trim());
