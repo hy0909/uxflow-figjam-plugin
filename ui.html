@@ -617,6 +617,9 @@
       dot.className = 'server-dot online';
       label.textContent = '서버 연결됨';
       banner.style.display = 'none';
+      // 일시적 단절로 목록에 에러가 남아 있으면 자동 복구
+      const list = document.getElementById('uxflowList');
+      if (editorType === 'figjam' && list && /연결할 수 없습니다/.test(list.textContent)) refreshUxFlows();
     } else {
       dot.className = 'server-dot offline';
       label.textContent = '서버 오프라인';
