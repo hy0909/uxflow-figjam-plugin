@@ -833,6 +833,20 @@ function validateFlowMinimal(flow) {
     if (dc >= 2 || (dc === 0 && dr >= 2)) errs.push(`비인접 엣지 ${e.from}→${e.to} (선이 노드 관통)`);
   }
 
+  // 대각 엣지 X자 교차 — 반대 방향 대각선 2개가 같은 통로에 오면 라벨이 겹침
+  const diags = [];
+  for (const e of (flow.edges || [])) {
+    const f = pos[e.from], t = pos[e.to];
+    if (!f || !t) continue;
+    if (Math.abs(t[0] - f[0]) === 1 && t[1] !== f[1]) diags.push([Math.min(f[0], t[0]), f[1], t[1], e]);
+  }
+  for (let i = 0; i < diags.length; i++) for (let j = i + 1; j < diags.length; j++) {
+    const [c1, fr1, tr1, e1] = diags[i], [c2, fr2, tr2, e2] = diags[j];
+    if (c1 !== c2 || (tr1 - fr1) * (tr2 - fr2) > 0) continue;
+    const lo1 = Math.min(fr1, tr1), hi1 = Math.max(fr1, tr1), lo2 = Math.min(fr2, tr2), hi2 = Math.max(fr2, tr2);
+    if (lo1 < hi2 && lo2 < hi1) errs.push(`대각 엣지 X자 교차: ${e1.from}→${e1.to} × ${e2.from}→${e2.to}`);
+  }
+
   const outCnt = {};
   for (const e of (flow.edges || [])) outCnt[e.from] = (outCnt[e.from] || 0) + 1;
   for (const n of (flow.nodes || [])) {
