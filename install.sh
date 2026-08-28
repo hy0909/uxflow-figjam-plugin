@@ -8,7 +8,8 @@ PLIST_NAME="com.figma.feature-spec.server"
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_PATH="$SCRIPT_DIR/server.js"
-LOG_DIR="$SCRIPT_DIR/logs"
+# launchd는 스폰 전에 로그 파일을 열어야 하는데 ~/Downloads 등 TCC 보호 폴더면 EX_CONFIG로 실패한다
+LOG_DIR="$HOME/Library/Logs"
 
 # node 경로 확인
 NODE_PATH=$(which node 2>/dev/null || true)
@@ -77,10 +78,10 @@ cat > "$PLIST_PATH" <<EOF
   <true/>
 
   <key>StandardOutPath</key>
-  <string>$LOG_DIR/server.log</string>
+  <string>$LOG_DIR/uxflow-server.log</string>
 
   <key>StandardErrorPath</key>
-  <string>$LOG_DIR/server.error.log</string>
+  <string>$LOG_DIR/uxflow-server.error.log</string>
 </dict>
 </plist>
 EOF
@@ -93,5 +94,5 @@ echo "   서버가 백그라운드에서 실행 중입니다. (포트 3765)"
 echo "   Claude Code 로그인 세션을 사용합니다. (API 키 불필요)"
 echo "   Mac 재시작 후에도 자동으로 실행됩니다."
 echo ""
-echo "   로그 확인:  tail -f $LOG_DIR/server.log"
+echo "   로그 확인:  tail -f $LOG_DIR/uxflow-server.log"
 echo "   서비스 중지: bash $SCRIPT_DIR/uninstall.sh"
