@@ -730,9 +730,51 @@ function callClaudeCLI(prompt, retriedAfterMissingCli) {
 // UX Flow 생성 — 플러그인 UI가 준 md/피그마 링크로 Claude가 flow JSON을 만든다
 // ═══════════════════════════════════════════════════════════
 
+// gh CLI 설치 여부 (1회만 검사 후 캐시)
+let ghCliAvailable = null;
+function hasGhCli() {
+  if (ghCliAvailable === null) {
+    try {
+      execFileSync('gh', ['--version'], { stdio: 'ignore' });
+      ghCliAvailable = true;
+    } catch (e) {
+      ghCliAvailable = false;
+    }
+  }
+  return ghCliAvailable;
+}
+
+// GitHub REST API 직접 호출 — gh CLI가 없어도 공개 레포는 읽을 수 있게 하는 폴백
+function githubApiGet(apiPath) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    https.get(`https://api.github.com/${apiPath}`, {
+      headers: { 'User-Agent': 'uxflow-figjam-plugin', Accept: 'application/vnd.github+json' },
+    }, resp => {
+      let body = '';
+      resp.on('data', d => body += d);
+      resp.on('end', () => {
+        if (resp.statusCode !== 200) return reject(new Error(`GitHub API ${resp.statusCode}`));
+        try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+// contents API 1회 조회 — gh(프라이빗 지원) 우선, 없으면 공개 REST API
+async function githubContents(owner, repo, p, ref) {
+  const apiPath = `repos/${owner}/${repo}/contents/${p}?ref=${ref}`;
+  if (hasGhCli()) {
+    const out = execFileSync('gh', ['api', apiPath],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
+    return JSON.parse(out);
+  }
+  return githubApiGet(apiPath);
+}
+
 // GitHub blob/tree/raw URL → md 원문 목록 [{name, url, content}]
-// ref에 슬래시(브랜치명 docs/foo)가 올 수 있어 ref/path 분리를 시도하며 gh api로 조회한다(프라이빗 레포 지원).
-function fetchGithubMd(url, listOnly) {
+// ref에 슬래시(브랜치명 docs/foo)가 올 수 있어 ref/path 분리를 시도한다.
+async function fetchGithubMd(url, listOnly) {
   const m = String(url).match(/github\.com\/([^/]+)\/([^/]+)\/(blob|tree|raw)\/(.+)$/);
   if (!m) return null;
   const [, owner, repo, kind, rest] = m;
@@ -742,18 +784,14 @@ function fetchGithubMd(url, listOnly) {
     const ref = segs.slice(0, refLen).join('/');
     const p = segs.slice(refLen).join('/');
     try {
-      const out = execFileSync('gh', ['api', `repos/${owner}/${repo}/contents/${p}?ref=${ref}`],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
-      const data = JSON.parse(out);
+      const data = await githubContents(owner, repo, p, ref);
       if (Array.isArray(data)) {
         // 디렉터리(tree): 안의 .md 전부
         const files = [];
         for (const f of data) {
           if (f.type === 'file' && /\.md$/i.test(f.name)) {
             if (listOnly) { files.push({ name: f.name, url: f.html_url }); continue; }
-            const fo = execFileSync('gh', ['api', `repos/${owner}/${repo}/contents/${f.path}?ref=${ref}`],
-              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
-            const fd = JSON.parse(fo);
+            const fd = await githubContents(owner, repo, f.path, ref);
             files.push({ name: f.name, url: f.html_url, content: Buffer.from(fd.content, 'base64').toString('utf8') });
           }
         }
@@ -765,17 +803,19 @@ function fetchGithubMd(url, listOnly) {
       }
     } catch (e) { /* 다음 ref 분리 시도 */ }
   }
-  throw new Error(`GitHub md를 읽지 못했습니다: ${url} — gh CLI 로그인(gh auth login)과 링크를 확인하세요.`);
+  throw new Error(`GitHub md를 읽지 못했습니다: ${url} — ${hasGhCli()
+    ? '링크와 접근 권한을 확인하세요.'
+    : '공개 레포면 링크를, 프라이빗이면 gh CLI 설치·로그인(gh auth login)이 필요합니다. md 파일을 플러그인에 끌어다 놓아도 됩니다.'}`);
 }
 
 // 링크 미리보기: 다운로드 없이 md 파일 목록만 확인 (폴더 링크는 안의 md 전부 나열)
-function probeMdSources(mdUrls) {
+async function probeMdSources(mdUrls) {
   const files = [];
   for (const u of mdUrls) {
     const url = String(u).trim();
     if (!url) continue;
     if (/github\.com\/[^/]+\/[^/]+\/(blob|tree|raw)\//.test(url)) {
-      const got = fetchGithubMd(url, true);
+      const got = await fetchGithubMd(url, true);
       if (got) files.push(...got);
     } else {
       files.push({ name: url.split('/').pop() || 'doc.md', url });
@@ -805,7 +845,7 @@ async function collectMdSources(mdUrls) {
     const url = String(u).trim();
     if (!url) continue;
     if (/github\.com\/[^/]+\/[^/]+\/(blob|tree|raw)\//.test(url)) {
-      const files = fetchGithubMd(url);
+      const files = await fetchGithubMd(url);
       if (files) sources.push(...files);
     } else {
       const content = await fetchRawUrl(url);
@@ -889,13 +929,20 @@ async function generateUxFlows(body) {
   const mdUrls = Array.isArray(body.mdUrls) ? body.mdUrls : [];
   const figmaUrls = Array.isArray(body.figmaUrls) ? body.figmaUrls : [];
   const notes = String(body.notes || '').trim();
-  if (!mdUrls.length && !notes) throw new Error('md 링크 또는 기획 메모 중 하나는 필요합니다.');
+  // 플러그인 UI에서 드래그앤드롭으로 첨부한 md — 링크 없이 이것만으로도 생성 가능
+  const mdFiles = (Array.isArray(body.mdFiles) ? body.mdFiles : [])
+    .filter(f => f && f.content)
+    .map(f => ({ name: String(f.name || 'attached.md'), url: '', content: String(f.content) }));
+  if (!mdUrls.length && !mdFiles.length && !notes) {
+    throw new Error('md 링크·첨부 파일·기획 메모 중 하나는 필요합니다.');
+  }
 
-  const sources = await collectMdSources(mdUrls);
+  const sources = [...mdFiles, ...(await collectMdSources(mdUrls))];
   const rules = loadUxflowSkillRules();
 
   const mdBlock = sources.map(s =>
-    `### ${s.name}\nURL: ${s.url}\n\n${s.content.slice(0, 30000)}`).join('\n\n---\n\n');
+    `### ${s.name}\n${s.url ? 'URL: ' + s.url : '출처: 첨부 파일 (URL 없음 — docLinks에 넣지 말 것)'}\n\n${s.content.slice(0, 30000)}`
+  ).join('\n\n---\n\n');
 
   const prompt = `너는 UX Flow Generator다. 아래 스펙 md와 규칙에 따라 FigJam에 그릴 flow JSON을 만든다.
 
@@ -962,10 +1009,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/ux-flow/probe') {
     let body = '';
     req.on('data', chunk => body += chunk);
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const { mdUrls } = JSON.parse(body || '{}');
-        const files = probeMdSources(Array.isArray(mdUrls) ? mdUrls : []);
+        const files = await probeMdSources(Array.isArray(mdUrls) ? mdUrls : []);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, files }));
       } catch (e) {

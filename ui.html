@@ -120,6 +120,26 @@
   .doc-remove:hover { background: #3a2a2a; color: #e05252; }
   input[type="file"] { display: none; }
 
+  /* md 드래그앤드롭 첨부 (UX Flow 탭) */
+  .drop-zone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    background: #1c1c1c; border: 1px dashed #3a3a3a; border-radius: 7px;
+    padding: 14px 10px; cursor: pointer; text-align: center;
+    transition: border-color .15s, background .15s;
+  }
+  .drop-zone:hover { border-color: #7c6af7; background: #23232e; }
+  .drop-zone.dragover { border-color: #7c6af7; border-style: solid; background: #26263a; }
+  .drop-zone-main { font-size: 11px; color: #bbb; pointer-events: none; }
+  .drop-zone-sub  { font-size: 10px; color: #666; pointer-events: none; }
+  .gen-file {
+    display: flex; align-items: center; gap: 6px;
+    background: #22223a; border: 1px solid #4a4a6a; border-radius: 6px; padding: 5px 8px;
+  }
+  .gen-file-name { flex: 1; min-width: 0; font-size: 11px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gen-file-size { font-size: 10px; color: #777; flex-shrink: 0; }
+  .gen-file-x { font-size: 13px; color: #666; cursor: pointer; padding: 0 3px; border-radius: 4px; flex-shrink: 0; }
+  .gen-file-x:hover { background: #3a2a2a; color: #e05252; }
+
   .main {
     flex: 1; overflow-y: auto; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 10px;
@@ -516,7 +536,8 @@
   <div class="tab-panel" data-panel="uxflow" hidden>
     <div class="hint-text" id="uxflowEnvHint">
       <b>UX Flow 그리기 (피그잼 전용)</b><br>
-      • md 링크(GitHub)와 피그마 링크를 넣고 <b>생성</b>하면 Claude가 플로우를 만들어 바로 그립니다.<br>
+      • md 링크(GitHub)나 <b>md 파일 드래그앤드롭</b>, 피그마 링크를 넣고 <b>생성</b>하면 Claude가 플로우를 만들어 바로 그립니다.<br>
+      • 프라이빗 레포라 링크를 못 읽으면(gh CLI 미설치·미로그인) md 파일을 직접 끌어다 놓으세요.<br>
       • 이미 저장된 플로우는 아래 목록에서 클릭해 그립니다.
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;background:#202020;border:1px solid #333;border-radius:10px;padding:12px;margin-bottom:10px;">
@@ -524,6 +545,13 @@
       <label style="font-size:11px;color:#aaa;">📎 링크 붙여넣기 — md(GitHub)·피그마 섞어서 몇 개든. 줄바꿈·쉼표·공백 아무거나로 구분</label>
       <textarea id="genUrls" rows="4" oninput="updateLinkCount()" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;resize:vertical;font-family:inherit;" placeholder="https://github.com/org/repo/tree/branch/docs, https://www.figma.com/design/...?node-id=1-2 ..."></textarea>
       <div id="genLinkCount" style="font-size:11px;color:#888;">감지된 링크 없음</div>
+      <label style="font-size:11px;color:#aaa;margin-top:2px;">📎 md 파일 첨부 — 드래그앤드롭 (링크 대신 써도 됩니다)</label>
+      <div class="drop-zone" id="genDrop" onclick="triggerFile('file-genmd')">
+        <div class="drop-zone-main">md 파일을 여기로 끌어다 놓으세요</div>
+        <div class="drop-zone-sub">클릭해서 선택할 수도 있어요 · .md .markdown .txt · 파일당 최대 1MB</div>
+      </div>
+      <input type="file" id="file-genmd" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple onchange="handleGenFiles(this.files); this.value='';" />
+      <div id="genFileList" style="display:flex;flex-direction:column;gap:4px;"></div>
       <label style="font-size:11px;color:#aaa;">✏️ 추가 지시 (선택)</label>
       <input id="genNotes" style="background:#161616;border:1px solid #3a3a3a;border-radius:6px;color:#e0e0e0;font-size:11px;padding:6px 8px;" placeholder="예: 발주 신청 기능만 / 관리자 플로우 포함">
       <button class="btn btn-primary" id="genBtn" onclick="generateUxFlow()" style="margin-top:4px;">⚡ 플로우 생성 → 그리기</button>
@@ -696,8 +724,12 @@
   function updateLinkCount() {
     const { mdUrls, figmaUrls } = parseLinks();
     const el = document.getElementById('genLinkCount');
-    if (!mdUrls.length && !figmaUrls.length) { el.textContent = '감지된 링크 없음'; return; }
-    el.textContent = `감지: 📄 md 링크 ${mdUrls.length}개 (폴더면 안의 md 전부 읽음 — 확인 중...) · 🔗 피그마 ${figmaUrls.length}개`;
+    const att = genFiles.length ? ` · 📎 첨부 ${genFiles.length}개` : '';
+    if (!mdUrls.length && !figmaUrls.length) {
+      el.textContent = '감지된 링크 없음' + att;
+      return;
+    }
+    el.textContent = `감지: 📄 md 링크 ${mdUrls.length}개 (폴더면 안의 md 전부 읽음 — 확인 중...) · 🔗 피그마 ${figmaUrls.length}개` + att;
     clearTimeout(probeTimer);
     const seq = ++probeSeq;
     probeTimer = setTimeout(async () => {
@@ -709,32 +741,124 @@
         const d = await r.json();
         if (seq !== probeSeq) return;
         const names = (d.files || []).map(f => f.name);
-        el.textContent = names.length
+        el.textContent = (names.length
           ? `감지: 📄 md ${names.length}개 (${names.join(', ')}) · 🔗 피그마 ${figmaUrls.length}개`
-          : `감지: 📄 읽을 수 있는 md 없음 — 링크·gh 로그인 확인 · 🔗 피그마 ${figmaUrls.length}개`;
+          : `감지: 📄 읽을 수 있는 md 없음 — 링크 확인, 또는 md 파일을 끌어다 놓으세요 · 🔗 피그마 ${figmaUrls.length}개`) + att;
       } catch (e) {
-        if (seq === probeSeq) el.textContent = `감지: 📄 md 링크 ${mdUrls.length}개 · 🔗 피그마 ${figmaUrls.length}개`;
+        if (seq === probeSeq) el.textContent = `감지: 📄 md 링크 ${mdUrls.length}개 · 🔗 피그마 ${figmaUrls.length}개` + att;
       }
     }, 500);
   }
 
-  // md/피그마 링크 → 서버가 Claude로 flow JSON 생성 → 자동 그리기
+  // ── md 파일 드래그앤드롭 첨부 ──
+  // gh CLI가 없거나 프라이빗 레포여서 링크를 못 읽을 때, md를 직접 올려 생성한다.
+  let genFiles = []; // [{name, content, size}]
+  const GEN_FILE_MAX = 1024 * 1024;
+
+  function handleGenFiles(fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    const rejected = [];
+    let pending = files.length;
+
+    const finish = () => {
+      renderGenFiles();
+      updateLinkCount();
+      if (rejected.length) setStatus('⚠ 첨부 제외: ' + rejected.join(', '), 'error');
+      else setStatus(`📎 md ${genFiles.length}개 첨부됨 — [⚡ 플로우 생성 → 그리기]를 누르세요.`, 'success');
+    };
+
+    files.forEach(file => {
+      if (file.size > GEN_FILE_MAX) {
+        rejected.push(file.name + ' (1MB 초과)');
+        if (!--pending) finish();
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = e => {
+        genFiles = genFiles.filter(f => f.name !== file.name); // 같은 이름 재첨부 = 교체
+        genFiles.push({ name: file.name, content: e.target.result, size: file.size });
+        if (!--pending) finish();
+      };
+      reader.onerror = () => {
+        rejected.push(file.name + ' (읽기 실패)');
+        if (!--pending) finish();
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  function removeGenFile(i) {
+    genFiles.splice(i, 1);
+    renderGenFiles();
+    updateLinkCount();
+  }
+
+  function renderGenFiles() {
+    const list = document.getElementById('genFileList');
+    list.innerHTML = '';
+    genFiles.forEach((f, i) => {
+      const row = document.createElement('div');
+      row.className = 'gen-file';
+      const icon = document.createElement('span');
+      icon.textContent = '📄';
+      icon.style.fontSize = '12px';
+      const name = document.createElement('span');
+      name.className = 'gen-file-name';
+      name.textContent = f.name;
+      const size = document.createElement('span');
+      size.className = 'gen-file-size';
+      size.textContent = Math.max(1, Math.round((f.size || f.content.length) / 1024)) + 'KB';
+      const x = document.createElement('span');
+      x.className = 'gen-file-x';
+      x.textContent = '✕';
+      x.title = '첨부 제거';
+      x.onclick = () => removeGenFile(i);
+      row.appendChild(icon); row.appendChild(name); row.appendChild(size); row.appendChild(x);
+      list.appendChild(row);
+    });
+  }
+
+  // 드롭 영역 배선 — 영역 밖에 떨어뜨렸을 때 플러그인 iframe이 파일로 이동하는 것도 막는다
+  function wireGenDrop() {
+    const zone = document.getElementById('genDrop');
+    if (!zone) return;
+    const stop = e => { e.preventDefault(); e.stopPropagation(); };
+    ['dragenter', 'dragover'].forEach(ev =>
+      zone.addEventListener(ev, e => { stop(e); zone.classList.add('dragover'); }));
+    ['dragleave', 'dragend'].forEach(ev =>
+      zone.addEventListener(ev, e => { stop(e); zone.classList.remove('dragover'); }));
+    zone.addEventListener('drop', e => {
+      stop(e);
+      zone.classList.remove('dragover');
+      const dt = e.dataTransfer;
+      if (dt && dt.files && dt.files.length) handleGenFiles(dt.files);
+      else setStatus('⚠ 파일을 인식하지 못했습니다 — 영역을 클릭해 직접 선택해보세요.', 'error');
+    });
+    ['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => {
+      if (!zone.contains(e.target)) e.preventDefault();
+    }));
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireGenDrop);
+  else wireGenDrop();
+
+  // md 링크/첨부 파일/피그마 링크 → 서버가 Claude로 flow JSON 생성 → 자동 그리기
   async function generateUxFlow() {
     const btn = document.getElementById('genBtn');
     const { mdUrls, figmaUrls } = parseLinks();
     const notes = document.getElementById('genNotes').value.trim();
-    if (!mdUrls.length && !notes) {
-      setStatus('⚠ md 링크 또는 추가 지시 중 하나는 입력하세요.', 'error');
+    if (!mdUrls.length && !genFiles.length && !notes) {
+      setStatus('⚠ md 링크·첨부 파일·추가 지시 중 하나는 입력하세요.', 'error');
       return;
     }
     btn.disabled = true;
     btn.textContent = '⏳ 생성 중... (문서 양에 따라 1~5분)';
-    setStatus('md를 읽고 플로우를 생성하는 중...', '');
+    setStatus(genFiles.length ? `첨부 md ${genFiles.length}개를 읽고 플로우를 생성하는 중...` : 'md를 읽고 플로우를 생성하는 중...', '');
     try {
       const res = await fetch(SERVER + '/ux-flow/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mdUrls, figmaUrls, notes }),
+        body: JSON.stringify({ mdUrls, figmaUrls, notes, mdFiles: genFiles.map(f => ({ name: f.name, content: f.content })) }),
         signal: AbortSignal.timeout(330000),
       });
       const data = await res.json();
